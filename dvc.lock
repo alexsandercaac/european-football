@@ -10,25 +10,31 @@ stages:
     - path: src/database_load.py
       md5: 1a93bf8b3485e347af797a62eda2dcbf
       size: 1208
+    - path: src/utils/data/load.py
+      md5: 20f3c39ed6ec2f6b9747d761c6c265f5
+      size: 608
+    - path: src/utils/dvc/params.py
+      md5: e2099913c896131b3a7a7844fff0652d
+      size: 805
     outs:
     - path: data/interim/country.csv
-      md5: 3030c2931c0779b0bd17189f27b347bd
-      size: 183
+      md5: 60464fc984609f242c24a30ed315cb6b
+      size: 159
     - path: data/interim/league.csv
-      md5: 2e66859043c3c36067da9657c707f0ed
-      size: 390
+      md5: 36cde89b49a7c1a597e867efeafa9963
+      size: 366
     - path: data/interim/match.csv
-      md5: 726c46822247ba917f7237b61da878ff
-      size: 282741442
+      md5: a88f9f0b158177d44010b5735f57f2ef
+      size: 282596677
     - path: data/interim/player.csv
-      md5: 8978954003b4b4000ed59bf865dcf1a2
-      size: 760019
+      md5: 2d30fbfb7b6a9883af417a4f14a15e9f
+      size: 704768
     - path: data/interim/player_attributes.csv
-      md5: 9479c31992f6af033fec1ccc3b71badd
-      size: 43501342
+      md5: c8fcb9efe7f38577bded712613e38fd6
+      size: 42324605
     - path: data/interim/team.csv
-      md5: 63d8a7d6423a51e5025cf4ed8729b6b0
-      size: 11573
+      md5: 788ce1041ae54879620ab53e4bb9711f
+      size: 10486
     - path: data/interim/team_attributes.csv
-      md5: 2e37e711aefe6c99ef8afcbe3004fd65
-      size: 222222
+      md5: d5ba897c3457578354cae68d0d33950d
+      size: 216041

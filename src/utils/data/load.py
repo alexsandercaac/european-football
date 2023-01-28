@@ -14,7 +14,8 @@ def load_table(table_name, connection):
     Returns:
         pandas.DataFrame: Dataframe with the data from the table
     """
-
-    df = pd.read_sql_query("SELECT * FROM {}".format(table_name), connection)
+    # read sql query into dataframe with column "id" as index
+    df = pd.read_sql_query(
+        f"SELECT * FROM {table_name}", connection, index_col="id")
 
     return df

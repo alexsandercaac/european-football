@@ -3,6 +3,8 @@ stages:
     cmd: python3 src/database_load.py
     deps: 
     - src/database_load.py
+    - src/utils/data/load.py
+    - src/utils/dvc/params.py
     - data/raw
     outs:
     - data/interim/country.csv
