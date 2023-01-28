@@ -2,9 +2,11 @@
     This module contains auxiliary functions for direct data loading.
 """
 import pandas as pd
+import sqlite3
 
 
-def load_table(table_name, connection):
+def load_table(table_name: str, connection: sqlite3.Connection
+               ) -> pd.DataFrame:
     """
     Load a table from the database and return it as a pandas dataframe
 
@@ -19,3 +21,4 @@ def load_table(table_name, connection):
         f"SELECT * FROM {table_name}", connection, index_col="id")
 
     return df
+
