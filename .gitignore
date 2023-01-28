@@ -133,3 +133,7 @@ venv/
 
 # VSCode
 *.code-workspace
+
+# Data
+*.sqlite
+*.csv
