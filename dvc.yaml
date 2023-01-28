@@ -1,0 +1,14 @@
+stages:
+  database_load:
+    cmd: python3 src/database_load.py
+    deps: 
+    - src/database_load.py
+    - data/raw
+    outs:
+    - data/interim/country.csv
+    - data/interim/league.csv
+    - data/interim/match.csv
+    - data/interim/player.csv
+    - data/interim/player_attributes.csv
+    - data/interim/team.csv
+    - data/interim/team_attributes.csv
