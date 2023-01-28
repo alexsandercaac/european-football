@@ -1,0 +1,2 @@
+database_load:
+  sql_database: data/raw/database.sqlite
