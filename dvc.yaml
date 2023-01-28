@@ -14,3 +14,10 @@ stages:
     - data/interim/player_attributes.csv
     - data/interim/team.csv
     - data/interim/team_attributes.csv
+  player_preprocessing:
+    cmd: python3 src/player_preprocessing.py
+    deps:
+    - src/player_preprocessing.py
+    - data/interim/player.csv
+    outs:
+    - data/interim/player_preprocessed.csv

@@ -11,8 +11,8 @@ stages:
       md5: 1a93bf8b3485e347af797a62eda2dcbf
       size: 1208
     - path: src/utils/data/load.py
-      md5: 20f3c39ed6ec2f6b9747d761c6c265f5
-      size: 608
+      md5: f4ce607564d4d10bdc792a8e4a0c1e34
+      size: 681
     - path: src/utils/dvc/params.py
       md5: e2099913c896131b3a7a7844fff0652d
       size: 805
@@ -38,3 +38,16 @@ stages:
     - path: data/interim/team_attributes.csv
       md5: d5ba897c3457578354cae68d0d33950d
       size: 216041
+  player_preprocessing:
+    cmd: python3 src/player_preprocessing.py
+    deps:
+    - path: data/interim/player.csv
+      md5: 2d30fbfb7b6a9883af417a4f14a15e9f
+      size: 704768
+    - path: src/player_preprocessing.py
+      md5: 7e3d19bb95251395f20375d5e3e3202f
+      size: 807
+    outs:
+    - path: data/interim/player_preprocessed.csv
+      md5: 8c4b76abbbe6f8db0d90e0460a5b08be
+      size: 603604
