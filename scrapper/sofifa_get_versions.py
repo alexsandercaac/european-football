@@ -53,21 +53,21 @@ def main():
         versions_df = pd.DataFrame(versions)
         now = datetime.now()
         dt_string = now.strftime(DATE_FORMAT)
-        versions_df.to_csv(f"scrapper/data/versions_df_{dt_string}.csv")
+        versions_df.to_csv(f"scrapper/data/players_versions/versions_df_{dt_string}.csv")
 
     except Exception as e:
         print("Error:", e)
         versions_df = pd.DataFrame(versions)
         now = datetime.now()
         dt_string = now.strftime(DATE_FORMAT)
-        versions_df.to_csv(f"scrapper/data/versions_df_{dt_string}.csv")
+        versions_df.to_csv(f"scrapper/data/players_versions/versions_df_{dt_string}.csv")
 
         with open("scrapper/data/last_id.txt", "w") as file:
             file.write(str(player_id))
         versions = []
 
 
-def retry(fun, max_tries=20):
+def retry(fun, max_tries=50):
     for i in range(max_tries):
         time.sleep(5)
         print(f"Try number {i}")
