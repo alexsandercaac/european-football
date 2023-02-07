@@ -4,16 +4,11 @@ import pandas as pd
 import time
 from datetime import datetime
 import json
-import random
-from tqdm import tqdm
 import numpy as np
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-import logging
-from threading import current_thread
-from threading import get_ident
-from threading import get_native_id
+from concurrent.futures import ThreadPoolExecutor
 import psycopg2
 import psycopg2.extras
+from typing import Tuple
 
 
 DATE_FORMAT = "%d-%m-%Y %H_%M_%S"
@@ -23,9 +18,17 @@ CONN_STRING = "host={} port={} dbname={} user={} password={}".format(
     'localhost', '5432', 'postgres', 'postgres', 'album2022')
 
 
-def get_player_position(html):
-    # Getting the player's best position: <li> with "ellipsis" class
-    # and with "Best Position" text inside.
+def get_player_position(html: bs.BeautifulSoup) -> str:
+    """Getting the player's best position: <li> with "ellipsis" class
+    and with "Best Position" text inside.
+
+    Args:
+        html (bs.BeautifulSoup): Page content
+
+    Returns:
+        position (str): Player's position.
+    """
+
     lis = html.find_all("li", "ellipsis")
     for li in lis:
         if "Best Position" in str(li):
@@ -35,8 +38,20 @@ def get_player_position(html):
     return position
 
 
-def get_player_team(html):
-    # Teams are in the divs with "block-quarter" class.
+def get_player_team(html: bs.BeautifulSoup):
+    """Get the player's team. Teams are in the divs with "block-quarter" class.
+    First we try to find the team by the term "Contract". If found, the player
+    is at a real club. Otherwise, he's only in his national team and then we'll
+    put it as his team for the sake of having a image.
+
+    Args:
+        html (bs.BeautifulSoup): Page content
+
+    Returns:
+        team (str): Player's team
+        team_img_data_src (str): Team's logo
+        team_id (str): Team's id to later link.
+    """
     divs = html.find_all("div", "block-quarter")
     team = ""
     for div in divs:
@@ -64,7 +79,15 @@ def get_player_team(html):
     return team, team_img_data_src, team_id
 
 
-def get_player_picture(html):
+def get_player_picture(html: bs.BeautifulSoup) -> str:
+    """Get player's picture of the version selected
+
+    Args:
+        html (bs.BeautifulSoup): Page content.
+
+    Returns:
+        player_img_src: Player's image source.
+    """
     # Player picture is in the div with "bp3-card player" class.
     player_div = html.find("div", "bp3-card player")
     player_img = player_div.find("img")
@@ -76,7 +99,18 @@ def get_player_picture(html):
     return player_img_src
 
 
-def load_players(ids):
+def load_players(ids: list) -> pd.DataFrame:
+    """Load players from players_versions DataFrame whose ids were not fetched
+    yet. Since we're paralellizing the process, we can't assure the order of
+    rows that were saved. We use the index from the players_versions df as
+    a identifier.
+
+    Args:
+        ids (list): Ids that were already fetched.
+
+    Returns:
+        pd.DataFrame: DataFrame with rows to fetch from players versions.
+    """
     players = pd.read_csv("scrapper/data/concatenated/players_versions.csv",
                           index_col=0)
     players = players.reset_index()
@@ -89,95 +123,22 @@ def load_players(ids):
     return players
 
 
-def main(players):
+def get_player(players: np.array):
+    """Fetch player version data from webpage and store it into the database.
+    Each players np.array is a subset from the players_versions dataframe.
+    If we can fetch all the information needed, we try to save it into the
+    database. If there's any error (wrong fetch, disconnect, etc) we rollback
+    and don't commit the operation. In case we receive a 429 response_code, we
+    wait 5s to try again.
 
-    with open("scrapper/headers.json", "r") as file:
-        headers = json.load(file)
-    with open(LAST_ID_FILE, "r") as file:
-        last_id = eval(file.read())
-
-    players_infos = []
-    try:
-        for i, version in players.iterrows():
-            if i >= last_id:
-                # For each version, we extract all information available.
-                date = version["date"]
-                potential = version["potential"]
-                rating = version["rating"]
-                value = version["value"]
-                wage = version["wage"]
-                version_id = version["version_id"]
-                fifa_edition = version["fifa_edition"]
-                player_id = version["player_id"]
-                print(f"""Player id {player_id} version {version_id}""")
-
-                session = requests.Session()
-                url = f'https://sofifa.com/player/{player_id}/{version_id}'
-                response = session.get(url, headers=headers)
-                html = bs.BeautifulSoup(response.text,'html.parser')
-
-                # Element in page with basic player info
-                player_schema_info = html.find(
-                    "script", {"type":"application/ld+json"})
-
-                player_schema_info = eval(player_schema_info.text.\
-                                          replace("\r", "").replace("\n", "").\
-                                            replace("\t", "").strip())
-
-                # position = get_player_position(html)
-                position = player_schema_info["jobTitle"]
-                country = player_schema_info["nationality"]
-                image = player_schema_info["image"]
-                team, team_img, team_id = get_player_team(html)
-                # player_img = get_player_picture(html)
-
-                players_infos.append({
-                    "player_id": player_id, "version_id": version_id,
-                    "team_id": team_id, "team": team, "date": date,
-                    "country": country, "potential": potential,
-                    "rating": rating, "value": value, "wage": wage,
-                    "fifa_edition": fifa_edition, "position": position,
-                    "player_img": image, "team_img": team_img
-                })
-
-            if i % 500 == 0 and i != 0:
-                now = datetime.now()
-                dt_string = now.strftime(DATE_FORMAT)
-                players_infos_df = pd.DataFrame(players_infos)
-                players_infos_df.to_csv(
-                    f"scrapper/data/players/players_df_{dt_string}.csv")
-
-                with open(LAST_ID_FILE, "w") as file:
-                    file.write(str(i))
-                players_infos = []
-
-    except Exception as e:
-        print("Error:", e)
-        now = datetime.now()
-        dt_string = now.strftime(DATE_FORMAT)
-        players_infos_df = pd.DataFrame(players_infos)
-        players_infos_df.to_csv(
-            f"scrapper/data/players/players_df_{dt_string}.csv")
-
-        with open(LAST_ID_FILE, "w") as file:
-            file.write(str(i))
-        players_infos = []
-
-
-def retry(fun, max_tries=100):
-    for i in range(max_tries):
-        time.sleep(5)
-        print(f"Try number {i}")
-        try:
-            fun()
-        except Exception as e:
-            print("Error", e)
-
-
-def get_player(players):
+    Args:
+        players (np.array): Set of players versions to fetch and store.
+    """
     time.sleep(0.4)
-    with open("scrapper/headers.json", "r") as file:
-        headers = json.load(file)
+
+    headers = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
+               AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 \
+               Safari/537.36"}
 
     try:
         players_infos = []
@@ -197,6 +158,10 @@ def get_player(players):
             session = requests.Session()
             url = f'https://sofifa.com/player/{player_id}/{version_id}'
             response = session.get(url, headers=headers)
+            # If the response code is 429, it means that we're sending too
+            # many requests and we have to wait.
+            if response.status_code == 429:
+                time.sleep(4)
             html = bs.BeautifulSoup(response.text,'html.parser')
 
             # Element in page with basic player info
@@ -207,12 +172,10 @@ def get_player(players):
                                         replace("\r", "").replace("\n", "").\
                                         replace("\t", "").strip())
 
-            # position = get_player_position(html)
             position = player_schema_info["jobTitle"]
             country = player_schema_info["nationality"]
             image = player_schema_info["image"]
             team, team_img, team_id = get_player_team(html)
-            # player_img = get_player_picture(html)
 
             player_info = {
                 "player_id": player_id, "version_id": version_id,
@@ -220,39 +183,29 @@ def get_player(players):
                 "country": country, "potential": potential,
                 "rating": rating, "value": value, "wage": wage,
                 "fifa_edition": fifa_edition, "position": position,
-                "player_img": image, "team_img": team_img, "index_id": player[-1]
+                "player_img": image, "team_img": team_img,
+                "index_id": player[-1]
             }
             players_infos.append(player_info)
 
-        insert_into_players_table(np.array(players_infos))
+        insert_into_players_table(pd.DataFrame(players_infos).to_numpy())
 
     except Exception as e:
         print("Error:", e)
 
 
-def insert_into_players_table(players_info):
-    """Insert individually the base_url that will be parsed"""
+def insert_into_players_table(players_info: list):
+    """Insert a batch of rows fetched from players versions information.
+    Using batches to avoid database overload of open connections.
+
+    Args:
+        players_info (list): Set of informations to be stored in database.
+    """
 
     conn = psycopg2.connect(CONN_STRING)
     cursor = conn.cursor()
 
     try:
-        # query = f"""
-        #     INSERT INTO sofifa.player
-        #     (player_id, version_id, team_id, team, "date", country, potential,
-        #     rating, value, wage, fifa_edition, "position", player_img, team_img,
-        #     index_id)
-        #     VALUES('{player_info["player_id"]}', '{player_info["version_id"]}',
-        #            '{player_info["team_id"]}', '{player_info["team"]}',
-        #            '{player_info["date"]}', '{player_info["country"]}',
-        #            '{player_info["potential"]}',
-        #            '{player_info["rating"]}', '{player_info["value"]}',
-        #            '{player_info["wage"]}', '{player_info["fifa_edition"]}',
-        #            '{player_info["position"]}', '{player_info["player_img"]}',
-        #            '{player_info["team_img"]}', '{player_info["index_id"]}')
-        #     on conflict (player_id, version_id) do nothing;
-        # """
-        # print(query)
         batch_query = """
         INSERT INTO sofifa.player
         (player_id, version_id, team_id, team, "date", country, potential,
@@ -264,8 +217,6 @@ def insert_into_players_table(players_info):
             cursor, batch_query, players_info, template=None, page_size=100
         )
 
-        # cursor.execute(query)
-
         conn.commit()
     except Exception as error:
         print(error)
@@ -276,7 +227,12 @@ def insert_into_players_table(players_info):
 
 
 def get_ids():
+    """Get all the ids that are stored in database. We use this to choose which
+    rows we'll fetch from players_versions dataframe.
 
+    Returns:
+        ids (list): List of ids.
+    """
     conn = psycopg2.connect(CONN_STRING)
     cursor = conn.cursor()
     try:
@@ -294,8 +250,6 @@ def get_ids():
 
 
 if __name__ == "__main__":
-    # retry(main)
-
     try:
         ids = get_ids()
         print(f"Loading players dataframe")
@@ -304,15 +258,12 @@ if __name__ == "__main__":
         players_np_index = np.array(players.index).reshape(-1, 1)
         players_np = np.concatenate((players_np, players_np_index), axis=1)
 
-        splits = np.array_split(players_np, 1_000_000)
+        # Creating many subsets to ease the processing and parellizing.
+        splits = np.array_split(players_np, 750_000)
         print("Starting ThreadPoolExecutor")
         with ThreadPoolExecutor(max_workers=CONCURRENT_THREADS)\
         as executor:
-            # futures = []
-            # for player in players:
-            #     futures.append(executor.submit(main, players = players))
-            # executor.map(get_player, players_np)
             executor.map(get_player, splits)
-    except Exception as erro_parse_content:
-       print("ERRO NO PARSE CONTENT")
-       print(erro_parse_content)
+    except Exception as error_players:
+       print("Error while obtaining players information")
+       print(error_players)
