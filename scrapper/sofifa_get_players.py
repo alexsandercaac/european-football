@@ -12,8 +12,8 @@ from typing import Tuple
 
 
 DATE_FORMAT = "%d-%m-%Y %H_%M_%S"
-LAST_ID_FILE = "scrapper/data/last_id_player.txt"
-CONCURRENT_THREADS = 4
+LAST_ID_FILE = "data/last_id_player.txt"
+CONCURRENT_THREADS = 6
 CONN_STRING = "host={} port={} dbname={} user={} password={}".format(
     'localhost', '5432', 'postgres', 'postgres', 'album2022')
 
@@ -111,7 +111,7 @@ def load_players(ids: list) -> pd.DataFrame:
     Returns:
         pd.DataFrame: DataFrame with rows to fetch from players versions.
     """
-    players = pd.read_csv("scrapper/data/concatenated/players_versions.csv",
+    players = pd.read_csv("data/concatenated/players_versions.csv",
                           index_col=0)
     players = players.reset_index()
     players.drop(columns=["index"], inplace=True)
@@ -134,7 +134,7 @@ def get_player(players: np.array):
     Args:
         players (np.array): Set of players versions to fetch and store.
     """
-    time.sleep(0.4)
+    time.sleep(0.1)
 
     headers = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
                AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 \
@@ -153,7 +153,7 @@ def get_player(players: np.array):
             version_id = player[5]
             fifa_edition = player[6]
             player_id = player[7]
-            print(f"""Player id {player_id} version {version_id}""")
+            # print(f"""Player id {player_id} version {version_id}""")
 
             session = requests.Session()
             url = f'https://sofifa.com/player/{player_id}/{version_id}'
@@ -161,7 +161,8 @@ def get_player(players: np.array):
             # If the response code is 429, it means that we're sending too
             # many requests and we have to wait.
             if response.status_code == 429:
-                time.sleep(4)
+                time.sleep(3.5)
+                print("Too many requests")
             html = bs.BeautifulSoup(response.text,'html.parser')
 
             # Element in page with basic player info
