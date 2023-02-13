@@ -17,64 +17,6 @@ CONN_STRING = "host={} port={} dbname={} user={} password={}".format(
     'localhost', '5432', 'postgres', 'postgres', 'album2022')
 
 
-# def main():
-#     players = pd.read_csv("data/interim/player.csv", index_col=0)
-#     players_fifa_api_id = list(players["player_fifa_api_id"])
-#     players_fifa_api_id.sort()
-
-#     with open("scrapper/data/last_id.txt", "r") as file:
-#         last_id = int(file.read())
-
-#     players_fifa_api_id = [e for e in players_fifa_api_id if e>=last_id]
-
-#     session = requests.Session()
-
-#     with open("scrapper/headers.json", "r") as file:
-#         headers = json.load(file)
-
-#     versions = []
-
-#     # Player's Versions
-#     try:
-#         for player_id in players_fifa_api_id:
-#             print(f"Getting versions for player {player_id}")
-#             # time.sleep(random.randint(4, 7))
-#             url_versions = f"https://sofifa.com/api/player/history?id={player_id}"
-#             versions_obtained = session.get(url_versions, headers=headers).json()["data"]
-
-#             # time.sleep(random.randint(1, 3))
-
-#             for version in versions_obtained:
-#                 # ! If the version is empty, we don't have data for that player
-#                 # ! at that version.
-#                 if version[5] != "":
-#                     versions.append({
-#                         "date": version[0],
-#                         "potential": version[1],
-#                         "rating": version[2],
-#                         "value": version[3],
-#                         "wage": version[4],
-#                         "version_id": version[5],
-#                         "fifa_edition": version[6],
-#                         "player_id": player_id
-#                     })
-#         versions_df = pd.DataFrame(versions)
-#         now = datetime.now()
-#         dt_string = now.strftime(DATE_FORMAT)
-#         versions_df.to_csv(f"scrapper/data/players_versions/versions_df_{dt_string}.csv")
-
-#     except Exception as e:
-#         print("Error:", e)
-#         versions_df = pd.DataFrame(versions)
-#         now = datetime.now()
-#         dt_string = now.strftime(DATE_FORMAT)
-#         versions_df.to_csv(f"scrapper/data/players_versions/versions_df_{dt_string}.csv")
-
-#         with open("scrapper/data/last_id.txt", "w") as file:
-#             file.write(str(player_id))
-#         versions = []
-
-
 def insert_into_versions_table(versions: list):
     """Insert a batch of rows fetched from players versions information.
     Using batches to avoid database overload of open connections.
@@ -128,7 +70,7 @@ def get_versions_by_changelog(player_id):
     for link in links:
         href = link["href"]
         if "changeLog" not in href and "player" in href\
-            and "na" not in href:
+            and "na=" not in href:
                 change_log_urls.append(link["href"])
 
     change_log_versions = [version.split("/")[-2]
@@ -140,24 +82,62 @@ def get_versions_by_changelog(player_id):
     versions_obtained = session.get(
         url_versions, headers=headers).json()["data"]
 
-    versions_changelog = [version for version in versions_obtained
-                          if version[5] in change_log_versions]
+    # If there is no changelog, we only have one entry for the player. So we
+    # store the versions_obtained from api.
+    if len(change_log_versions) > 0:
+        versions_changelog = [version for version in versions_obtained
+                              if version[5] in change_log_versions]
+    else:
+        # Obtaining only existing versions
+        versions_changelog = [version for version in versions_obtained if
+                              version[5] != ""]
+    # print(versions_changelog)
 
     versions = []
-    for version in versions_changelog:
-        # ! If the version is empty, we don't have data for that player
-        # ! at that version.
-        if version[5] != "":
+    # If versions_changelog is empty, we have to manually insert the data.
+    # ! When inserting data for players, we have to check if the fields aren't
+    # ! None.
+    if len(versions_changelog) > 0:
+        for version in versions_changelog:
+            # ! If the version is empty, we don't have data for that player
+            # ! at that version.
+            if version[5] != "":
+                versions.append({
+                    "date": version[0],
+                    "potential": version[1],
+                    "rating": version[2],
+                    "value": version[3],
+                    "wage": version[4],
+                    "version_id": version[5],
+                    "fifa_edition": version[6],
+                    "player_id": player_id
+                })
+    else:
+        for change_log_version in change_log_versions:
             versions.append({
-                "date": version[0],
-                "potential": version[1],
-                "rating": version[2],
-                "value": version[3],
-                "wage": version[4],
-                "version_id": version[5],
-                "fifa_edition": version[6],
+                "date": None,
+                "potential": None,
+                "rating": None,
+                "value": None,
+                "wage": None,
+                "version_id": change_log_version,
+                "fifa_edition": None,
                 "player_id": player_id
             })
+    # The player for some reason doesn't exists in sofifa. We'll insert null
+    # data for him in database.
+    if response.status_code == 404:
+        print("The player does not exist in sofifa!")
+        versions = [{
+            "date": None,
+            "potential": None,
+            "rating": None,
+            "value": None,
+            "wage": None,
+            "version_id": "None",
+            "fifa_edition": None,
+            "player_id": player_id
+        }]
 
     insert_into_versions_table(pd.DataFrame(versions).to_numpy())
 
@@ -207,21 +187,24 @@ def load_players(ids: list) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    try:
-        player_ids = get_ids()
-        player_ids = [int(player_id) for player_id in player_ids]
-        print(f"Loading players dataframe")
-        players_fifa_api_id = load_players(player_ids)
 
-        if len(players_fifa_api_id) != 0:
+    versions_len = 1
+    while versions_len != 0:
+        try:
+            player_ids = get_ids()
+            player_ids = [int(player_id) for player_id in player_ids]
+            print(f"Loading players dataframe")
+            players_fifa_api_id = load_players(player_ids)
+
+            versions_len = len(players_fifa_api_id)
+            print(f"Players remaining: {versions_len}")
             # # Creating many subsets to ease the processing and parellizing.
             # splits = np.array_split(players_fifa_api_id, 4_000)
             print("Starting ThreadPoolExecutor")
             with ThreadPoolExecutor(max_workers=CONCURRENT_THREADS)\
             as executor:
                 executor.map(get_versions_by_changelog, players_fifa_api_id)
-        else:
-            print("There is no data to gather!")
-    except Exception as error_players:
-       print("Error while obtaining players information")
-       print(error_players)
+
+        except Exception as error_players:
+            print("Error while obtaining players information")
+            print(error_players)
