@@ -123,6 +123,15 @@ def load_players(ids: list) -> pd.DataFrame:
     return players
 
 
+def convert_to_zeros(s):
+    if s[-1] == 'M':
+        return int(float(s[:-1]) * 1000000)
+    elif s[-1] == 'K':
+        return int(float(s[:-1]) * 1000)
+    else:
+        return int(float(s))
+
+
 def get_player(players: np.array):
     """Fetch player version data from webpage and store it into the database.
     Each players np.array is a subset from the players_versions dataframe.
@@ -139,11 +148,11 @@ def get_player(players: np.array):
     headers = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
                AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 \
                Safari/537.36"}
-
     try:
         players_infos = []
         for player in players:
             time.sleep(0.4)
+            # print(player)
             # For each version, we extract all information available.
             date = player[0]
             potential = player[1]
@@ -153,7 +162,7 @@ def get_player(players: np.array):
             version_id = player[5]
             fifa_edition = player[6]
             player_id = player[7]
-            # print(f"""Player id {player_id} version {version_id}""")
+            print(f"""Player id {player_id} version {version_id}""")
 
             session = requests.Session()
             url = f'https://sofifa.com/player/{player_id}/{version_id}'
@@ -178,6 +187,69 @@ def get_player(players: np.array):
             image = player_schema_info["image"]
             team, team_img, team_id = get_player_team(html)
 
+            # If date is None, we didn't gather this information when scrapping
+            # versions
+            if date is None:
+                fifa_date_spans = html.find_all("span", "bp3-button-text")
+                date_spans = [span for span in fifa_date_spans
+                              if "FIFA" not in span.text]
+                date = date_spans[0].text
+                fifa_spans = [span for span in fifa_date_spans
+                              if "FIFA" in span.text]
+                fifa_edition = fifa_spans[0].text
+
+            if potential is None:
+                divs = html.find_all("div", "block-quarter")
+                for div in divs:
+                    if "Potential" in str(div):
+                        potential = int(''.join(
+                            [c for c in div.text if c.isdigit()]))
+
+            if rating is None:
+                divs = html.find_all("div", "block-quarter")
+                for div in divs:
+                    if "Overall Rating" in str(div):
+                        rating = int(''.join(
+                            [c for c in div.text if c.isdigit()]))
+
+            if value is None:
+                divs = html.find_all("div", "block-quarter")
+                for div in divs:
+                    if "Value" in str(div):
+                        print(div.text)
+                        value = div.text.replace("Value", "").replace("€", "")
+                        value = convert_to_zeros(value)
+
+            if wage is None:
+                divs = html.find_all("div", "block-quarter")
+                for div in divs:
+                    if "Wage" in str(div):
+                        print(div.text)
+                        wage = div.text.replace("Wage", "").replace("€", "")
+                        wage = convert_to_zeros(wage)
+
+            lis = html.find_all("li", "ellipsis")
+            for li in lis:
+                if "Preferred Foot" in li.text:
+                    preferred_foot = li.text.replace("Preferred Foot", "")
+                if "Weak Foot" in li.text:
+                    weak_foot = li.text.replace("Weak Foot", "").strip()
+                if "Skill Moves" in li.text:
+                    skill_moves = li.text.replace("Skill Moves", "").strip()
+                if "International Reputation" in li.text:
+                    intl_reputation = li.text.replace(
+                        "International Reputation", "").strip()
+                if "Work Rate" in li.text:
+                    work_rate = li.text.replace(
+                        "Work Rate", "").strip()
+                    if "N/A" in work_rate:
+                        work_rate_atk = None
+                        work_rate_def = None
+                    else:
+                        work_rate_atk, work_rate_def = work_rate.split("/")
+                        work_rate_atk = work_rate_atk.strip()
+                        work_rate_def = work_rate_def.strip()
+
             player_info = {
                 "player_id": player_id, "version_id": version_id,
                 "team_id": team_id, "team": team, "date": date,
@@ -185,10 +257,14 @@ def get_player(players: np.array):
                 "rating": rating, "value": value, "wage": wage,
                 "fifa_edition": fifa_edition, "position": position,
                 "player_img": image, "team_img": team_img,
-                "index_id": player[-1]
+                "preferred_foot": preferred_foot, "weak_foot": weak_foot,
+                "skill_moves": skill_moves, "intl_reputation": intl_reputation,
+                "work_rate_atk": work_rate_atk, "work_rate_def": work_rate_def
             }
+            # print(player_info)
             players_infos.append(player_info)
 
+        # print(players_infos)
         insert_into_players_table(pd.DataFrame(players_infos).to_numpy())
 
     except Exception as e:
@@ -211,8 +287,11 @@ def insert_into_players_table(players_info: list):
         INSERT INTO sofifa.player
         (player_id, version_id, team_id, team, "date", country, potential,
         rating, value, wage, fifa_edition, "position", player_img, team_img,
-        index_id)
-        VALUES %s"""
+        preferred_foot, weak_foot, skill_moves, intl_reputation, work_rate_atk,
+        work_rate_def)
+
+        VALUES %s
+        on conflict(player_id, version_id) do nothing"""
 
         psycopg2.extras.execute_values(
             cursor, batch_query, players_info, template=None, page_size=100
@@ -227,7 +306,7 @@ def insert_into_players_table(players_info: list):
         conn.close()
 
 
-def get_ids():
+def get_versions():
     """Get all the ids that are stored in database. We use this to choose which
     rows we'll fetch from players_versions dataframe.
 
@@ -237,34 +316,36 @@ def get_ids():
     conn = psycopg2.connect(CONN_STRING)
     cursor = conn.cursor()
     try:
-        query = f"""SELECT (index_id) from sofifa.player"""
+        query = f"""
+        SELECT * from sofifa.versions v where (v.player_id, v.version_id) not in
+        (select player_id, version_id from sofifa.player p)
+        limit 1000;"""
         cursor.execute(query)
         conn.commit()
-        ids = cursor.fetchall()
+        versions = cursor.fetchall()
+        return versions
     except Exception as error:
         print(error)
         conn.rollback()
     finally:
         cursor.close()
         conn.close()
-    return [id_[0] for id_ in ids]
 
 
 if __name__ == "__main__":
     try:
-        ids = get_ids()
-        print(f"Loading players dataframe")
-        players = load_players(ids)
-        players_np = np.array(players)
-        players_np_index = np.array(players.index).reshape(-1, 1)
-        players_np = np.concatenate((players_np, players_np_index), axis=1)
+        versions_len = 1
+        while versions_len != 0:
+            print(f"Querying versions")
+            versions = get_versions()
 
-        # Creating many subsets to ease the processing and parellizing.
-        splits = np.array_split(players_np, 750_000)
-        print("Starting ThreadPoolExecutor")
-        with ThreadPoolExecutor(max_workers=CONCURRENT_THREADS)\
-        as executor:
-            executor.map(get_player, splits)
+            versions_len = len(versions)
+            # Creating many subsets to ease the processing and parellizing.
+            splits = np.array_split(versions, 100)
+            print("Starting ThreadPoolExecutor")
+            with ThreadPoolExecutor(max_workers=CONCURRENT_THREADS)\
+            as executor:
+                executor.map(get_player, splits)
     except Exception as error_players:
        print("Error while obtaining players information")
        print(error_players)
