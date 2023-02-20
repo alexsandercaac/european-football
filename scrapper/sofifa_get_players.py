@@ -2,18 +2,18 @@ import bs4 as bs
 import requests
 import pandas as pd
 import time
-from datetime import datetime
-import json
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 import psycopg2
 import psycopg2.extras
-from typing import Tuple
 
 
 DATE_FORMAT = "%d-%m-%Y %H_%M_%S"
 LAST_ID_FILE = "data/last_id_player.txt"
-CONCURRENT_THREADS = 6
+TIME_BETWEEN_PLAYERS = 0.2
+TIME_RECONNECT = 4
+LIMIT_QUERY = 5000
+CONCURRENT_THREADS = 16
 CONN_STRING = "host={} port={} dbname={} user={} password={}".format(
     'localhost', '5432', 'postgres', 'postgres', 'album2022')
 
@@ -54,6 +54,8 @@ def get_player_team(html: bs.BeautifulSoup):
     """
     divs = html.find_all("div", "block-quarter")
     team = ""
+    team_img_data_src = None
+    team_id = None
     for div in divs:
         if "Contract" in str(div):
             team_img = div.find("img", {"data-type": "team"})
@@ -143,7 +145,6 @@ def get_player(players: np.array):
     Args:
         players (np.array): Set of players versions to fetch and store.
     """
-    time.sleep(0.1)
 
     headers = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
                AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 \
@@ -151,7 +152,7 @@ def get_player(players: np.array):
     try:
         players_infos = []
         for player in players:
-            time.sleep(0.4)
+            time.sleep(TIME_BETWEEN_PLAYERS)
             # print(player)
             # For each version, we extract all information available.
             date = player[0]
@@ -164,111 +165,129 @@ def get_player(players: np.array):
             player_id = player[7]
             print(f"""Player id {player_id} version {version_id}""")
 
-            session = requests.Session()
-            url = f'https://sofifa.com/player/{player_id}/{version_id}'
-            response = session.get(url, headers=headers)
-            # If the response code is 429, it means that we're sending too
-            # many requests and we have to wait.
-            if response.status_code == 429:
-                time.sleep(3.5)
-                print("Too many requests")
-            html = bs.BeautifulSoup(response.text,'html.parser')
+            if version_id == "None":
+                print("herer")
+                player_info = {
+                    "player_id": player_id, "version_id": version_id,
+                    "team_id": None, "team": None, "date": None,
+                    "country": None, "potential": None,
+                    "rating": None, "value": None, "wage": None,
+                    "fifa_edition": None, "position": None,
+                    "player_img": None, "team_img": None,
+                    "preferred_foot": None, "weak_foot": None,
+                    "skill_moves": None, "intl_reputation": None,
+                    "work_rate_atk": None, "work_rate_def": None
+                }
+                players_infos.append(player_info)
 
-            # Element in page with basic player info
-            player_schema_info = html.find(
-                "script", {"type":"application/ld+json"})
+            else:
+                session = requests.Session()
+                url = f'https://sofifa.com/player/{player_id}/{version_id}'
+                response = session.get(url, headers=headers)
+                # If the response code is 429, it means that we're sending too
+                # many requests and we have to wait.
+                if response.status_code == 429:
+                    time.sleep(TIME_RECONNECT)
+                    print("Too many requests")
+                html = bs.BeautifulSoup(response.text,'html.parser')
 
-            player_schema_info = eval(player_schema_info.text.\
-                                        replace("\r", "").replace("\n", "").\
-                                        replace("\t", "").strip())
+                # Element in page with basic player info
+                player_schema_info = html.find(
+                    "script", {"type":"application/ld+json"})
 
-            position = player_schema_info["jobTitle"]
-            country = player_schema_info["nationality"]
-            image = player_schema_info["image"]
-            team, team_img, team_id = get_player_team(html)
+                player_schema_info = eval(player_schema_info.text.\
+                    replace("\r", "").replace("\n", "").\
+                    replace("\t", "").strip())
 
-            # If date is None, we didn't gather this information when scrapping
-            # versions
-            if date is None:
-                fifa_date_spans = html.find_all("span", "bp3-button-text")
-                date_spans = [span for span in fifa_date_spans
-                              if "FIFA" not in span.text]
-                date = date_spans[0].text
-                fifa_spans = [span for span in fifa_date_spans
-                              if "FIFA" in span.text]
-                fifa_edition = fifa_spans[0].text
+                position = player_schema_info["jobTitle"]
+                country = player_schema_info["nationality"]
+                image = player_schema_info["image"]
+                team, team_img, team_id = get_player_team(html)
 
-            if potential is None:
-                divs = html.find_all("div", "block-quarter")
-                for div in divs:
-                    if "Potential" in str(div):
-                        potential = int(''.join(
-                            [c for c in div.text if c.isdigit()]))
+                # If date is None, we didn't gather this information
+                # when scrapping versions
+                if date is None:
+                    fifa_date_spans = html.find_all("span", "bp3-button-text")
+                    date_spans = [span for span in fifa_date_spans
+                                if "FIFA" not in span.text]
+                    date = date_spans[0].text
+                    fifa_spans = [span for span in fifa_date_spans
+                                if "FIFA" in span.text]
+                    fifa_edition = fifa_spans[0].text
 
-            if rating is None:
-                divs = html.find_all("div", "block-quarter")
-                for div in divs:
-                    if "Overall Rating" in str(div):
-                        rating = int(''.join(
-                            [c for c in div.text if c.isdigit()]))
+                if potential is None:
+                    divs = html.find_all("div", "block-quarter")
+                    for div in divs:
+                        if "Potential" in str(div):
+                            potential = int(''.join(
+                                [c for c in div.text if c.isdigit()]))
 
-            if value is None:
-                divs = html.find_all("div", "block-quarter")
-                for div in divs:
-                    if "Value" in str(div):
-                        print(div.text)
-                        value = div.text.replace("Value", "").replace("€", "")
-                        value = convert_to_zeros(value)
+                if rating is None:
+                    divs = html.find_all("div", "block-quarter")
+                    for div in divs:
+                        if "Overall Rating" in str(div):
+                            rating = int(''.join(
+                                [c for c in div.text if c.isdigit()]))
 
-            if wage is None:
-                divs = html.find_all("div", "block-quarter")
-                for div in divs:
-                    if "Wage" in str(div):
-                        print(div.text)
-                        wage = div.text.replace("Wage", "").replace("€", "")
-                        wage = convert_to_zeros(wage)
+                if value is None:
+                    divs = html.find_all("div", "block-quarter")
+                    for div in divs:
+                        if "Value" in str(div):
+                            print(div.text)
+                            value = div.text.replace(
+                                "Value", "").replace("€", "")
+                            value = convert_to_zeros(value)
 
-            lis = html.find_all("li", "ellipsis")
-            for li in lis:
-                if "Preferred Foot" in li.text:
-                    preferred_foot = li.text.replace("Preferred Foot", "")
-                if "Weak Foot" in li.text:
-                    weak_foot = li.text.replace("Weak Foot", "").strip()
-                if "Skill Moves" in li.text:
-                    skill_moves = li.text.replace("Skill Moves", "").strip()
-                if "International Reputation" in li.text:
-                    intl_reputation = li.text.replace(
-                        "International Reputation", "").strip()
-                if "Work Rate" in li.text:
-                    work_rate = li.text.replace(
-                        "Work Rate", "").strip()
-                    if "N/A" in work_rate:
-                        work_rate_atk = None
-                        work_rate_def = None
-                    else:
-                        work_rate_atk, work_rate_def = work_rate.split("/")
-                        work_rate_atk = work_rate_atk.strip()
-                        work_rate_def = work_rate_def.strip()
+                if wage is None:
+                    divs = html.find_all("div", "block-quarter")
+                    for div in divs:
+                        if "Wage" in str(div):
+                            print(div.text)
+                            wage = div.text.replace("Wage", "").replace("€", "")
+                            wage = convert_to_zeros(wage)
 
-            player_info = {
-                "player_id": player_id, "version_id": version_id,
-                "team_id": team_id, "team": team, "date": date,
-                "country": country, "potential": potential,
-                "rating": rating, "value": value, "wage": wage,
-                "fifa_edition": fifa_edition, "position": position,
-                "player_img": image, "team_img": team_img,
-                "preferred_foot": preferred_foot, "weak_foot": weak_foot,
-                "skill_moves": skill_moves, "intl_reputation": intl_reputation,
-                "work_rate_atk": work_rate_atk, "work_rate_def": work_rate_def
-            }
-            # print(player_info)
-            players_infos.append(player_info)
+                lis = html.find_all("li", "ellipsis")
+                for li in lis:
+                    if "Preferred Foot" in li.text:
+                        preferred_foot = li.text.replace("Preferred Foot", "")
+                    if "Weak Foot" in li.text:
+                        weak_foot = li.text.replace("Weak Foot", "").strip()
+                    if "Skill Moves" in li.text:
+                        skill_moves = li.text.replace("Skill Moves", "").strip()
+                    if "International Reputation" in li.text:
+                        intl_reputation = li.text.replace(
+                            "International Reputation", "").strip()
+                    if "Work Rate" in li.text:
+                        work_rate = li.text.replace(
+                            "Work Rate", "").strip()
+                        if "N/A" in work_rate:
+                            work_rate_atk = None
+                            work_rate_def = None
+                        else:
+                            work_rate_atk, work_rate_def = work_rate.split("/")
+                            work_rate_atk = work_rate_atk.strip()
+                            work_rate_def = work_rate_def.strip()
+
+                player_info = {
+                    "player_id": player_id, "version_id": version_id,
+                    "team_id": team_id, "team": team, "date": date,
+                    "country": country, "potential": potential,
+                    "rating": rating, "value": value, "wage": wage,
+                    "fifa_edition": fifa_edition, "position": position,
+                    "player_img": image, "team_img": team_img,
+                    "preferred_foot": preferred_foot, "weak_foot": weak_foot,
+                    "skill_moves": skill_moves,
+                    "intl_reputation": intl_reputation,
+                    "work_rate_atk": work_rate_atk,
+                    "work_rate_def": work_rate_def
+                }
+                players_infos.append(player_info)
 
         # print(players_infos)
         insert_into_players_table(pd.DataFrame(players_infos).to_numpy())
 
     except Exception as e:
-        print("Error:", e)
+        print("Error:", e, player_id, version_id)
 
 
 def insert_into_players_table(players_info: list):
@@ -313,13 +332,15 @@ def get_versions():
     Returns:
         ids (list): List of ids.
     """
+    print("Querying...")
     conn = psycopg2.connect(CONN_STRING)
     cursor = conn.cursor()
     try:
         query = f"""
-        SELECT * from sofifa.versions v where (v.player_id, v.version_id) not in
-        (select player_id, version_id from sofifa.player p)
-        limit 1000;"""
+        select v.* from sofifa.versions v left outer join sofifa.player p
+        on v.player_id = p.player_id and v.version_id = p.version_id
+        where p.player_id is null
+        limit {LIMIT_QUERY};"""
         cursor.execute(query)
         conn.commit()
         versions = cursor.fetchall()
@@ -341,7 +362,7 @@ if __name__ == "__main__":
 
             versions_len = len(versions)
             # Creating many subsets to ease the processing and parellizing.
-            splits = np.array_split(versions, 100)
+            splits = np.array_split(versions, LIMIT_QUERY)
             print("Starting ThreadPoolExecutor")
             with ThreadPoolExecutor(max_workers=CONCURRENT_THREADS)\
             as executor:
