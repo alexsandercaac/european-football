@@ -67,6 +67,33 @@ def get_player_team(html: bs.BeautifulSoup):
             team = team_link.text.strip()
 
     # If a team wasnt found, we'll use the players national team.
+    # TODO: criar nova coluna "is_on_national_team" para indicar se ele estava
+    # TODO: na seleção. Usar essa busca abaixo como informação. Acrescentar
+    # TODO: country_id para ter a informação do logo da seleção.
+
+    # TODO: Criar lookup de times, de seleções e de ligas (id, nome)
+    # TODO: Fazer busca nas urls:
+    # TODO: https://sofifa.com/teams?type=club e
+    # TODO: https://sofifa.com/teams?type=national
+    # TODO: Pegar country flag também. Usar country_id como o da seleção
+    # TODO: e não da bandeira.
+    # TODO: Criar urls de times e de players no código, não salvar no banco.
+    # TODO: https://cdn.sofifa.net/teams/100087/360.png exemplo em que 100087
+    # TODO: é o id do time. 360 é a resolução da imagem.
+    # TODO: Pro player, basta dividir seu id em dois e usar barras. Ex:
+    # TODO: 158023 vira 158/023
+    # TODO: É apenas uma foto por versão do jogo, então ao final acrescentar
+    # TODO: /22_180.png para o FIFA22, por exemplo.
+
+    # TODO: fazer um team_versions. Pegar versions (todas) e fazer um drop
+    # TODO: duplicates, mantendo a mais antiga.
+    # TODO: Pegar national_teams pro versions também.
+    # TODO: Os kits estão presentes em https://cdn.sofifa.net/kits/1/16_0.png
+    # TODO: onde por exemplo 1 é o id do time. O ano do jogo vem seguido da
+    # TODO: versão do uniforme. 0 é o principal, 1 o segundo, 2 o de goleiro
+    # TODO: e qualquer outra versão vem depois (3, 4...)
+    # TODO: Pegar também o id da liga
+
     if team == "":
         for div in divs:
             if "Position" in str(div) and "Kit Number" in str(div):
@@ -149,6 +176,7 @@ def get_player(players: np.array):
     headers = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
                AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 \
                Safari/537.36"}
+    # TODO: tirar o for e deixar por linha da tabela version
     try:
         players_infos = []
         for player in players:
@@ -166,7 +194,6 @@ def get_player(players: np.array):
             print(f"""Player id {player_id} version {version_id}""")
 
             if version_id == "None":
-                print("herer")
                 player_info = {
                     "player_id": player_id, "version_id": version_id,
                     "team_id": None, "team": None, "date": None,
@@ -186,9 +213,13 @@ def get_player(players: np.array):
                 response = session.get(url, headers=headers)
                 # If the response code is 429, it means that we're sending too
                 # many requests and we have to wait.
-                if response.status_code == 429:
-                    time.sleep(TIME_RECONNECT)
+                retries_count = 0
+                while response.status_code == 429:
+                    time.sleep(TIME_RECONNECT + retries_count)
                     print("Too many requests")
+                    session = requests.Session()
+                    response = session.get(url, headers=headers)
+                    retries_count += 1
                 html = bs.BeautifulSoup(response.text,'html.parser')
 
                 # Element in page with basic player info
@@ -364,6 +395,7 @@ if __name__ == "__main__":
             # Creating many subsets to ease the processing and parellizing.
             splits = np.array_split(versions, LIMIT_QUERY)
             print("Starting ThreadPoolExecutor")
+            # TODO: colocar por version e nao splits.
             with ThreadPoolExecutor(max_workers=CONCURRENT_THREADS)\
             as executor:
                 executor.map(get_player, splits)

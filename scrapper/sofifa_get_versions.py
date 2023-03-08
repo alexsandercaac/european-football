@@ -50,19 +50,24 @@ def insert_into_versions_table(versions: list):
 
 
 def get_versions_by_changelog(player_id):
-    session = requests.Session()
+    url_changelog = f"https://sofifa.com/player/{player_id}/changeLog"
 
     with open("scrapper/headers.json", "r") as file:
         headers = json.load(file)
 
+    session = requests.Session()
     print(f"Getting versions for player {player_id}")
     time.sleep(0.1)
-    url_changelog = f"https://sofifa.com/player/{player_id}/changeLog"
     response = session.get(url_changelog, headers=headers)
-    if response.status_code == 429:
-        time.sleep(3.5)
+    retries_count = 0
+    while response.status_code == 429:
+        time.sleep(3.5 + retries_count)
         print("Too many requests")
-    html_changelog = bs.BeautifulSoup(response.text,'html.parser')
+        session = requests.Session()
+        response = session.get(url_changelog, headers=headers)
+        retries_count += 1
+
+    html_changelog = bs.BeautifulSoup(response.text, 'html.parser')
 
     # Getting all versions that there was a change in player
     links = html_changelog.find_all("a", {"rel": "nofollow"})
@@ -166,6 +171,7 @@ def get_ids():
 
 
 def load_players(ids: list) -> pd.DataFrame:
+    # TODO: renomear para load_remaining_players
     """Load players from players_versions DataFrame whose ids were not fetched
     yet. Since we're paralellizing the process, we can't assure the order of
     rows that were saved. We use the index from the players_versions df as
